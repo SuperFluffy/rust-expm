@@ -1,0 +1,23 @@
+[package]
+name = "expm"
+version = "0.1.0"
+authors = ["Richard Janis Goldschmidt <janis.beckert@gmail.com>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/superluffy/rust-expm"
+description = "An implementation of the expm matrix exponential function by Higham and Al-Mohy, 2009"
+readme = "README.md"
+
+categories = ["science"]
+keywords = ["matrix", "exponential", "linalg", "ndarray", "expm"]
+
+[dependencies]
+cblas = "0.2"
+condest = "0.2"
+lapacke = "0.2"
+ndarray = "0.12"
+statrs = "0.10"
+
+[dev-dependencies]
+approx = "0.3.1"
+openblas-src = "0.7"
