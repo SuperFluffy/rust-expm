@@ -43,18 +43,32 @@ const THETA_9: f64 = 2.097847961257068e0;
 // const THETA_13: f64 = 5.371920351148152e0 // Alg 3.1
 const THETA_13: f64 = 4.25; // Alg 5.1
 
-/// Calculates the i-th coefficient arising in the [m/m] Padé approximant of the exponential
-/// function.
-fn pade_coefficient(i: u64, m: u64) -> f64 {
-    use statrs::function::factorial::factorial;
-
-    assert!(i <= m, "The i-th coefficient for a [m/m] Padé approximant is undefined for i > m.");
-
-    // TODO: Check if the order of multiplications and divisions should be adapted to always
-    // multiply quantities of similar magnitude, i.e. to not lose precision to floating point
-    // arithmetic
-    factorial(2*m - i) * factorial(m) / factorial(2*m) / factorial(m-i) / factorial(i)
-}
+const PADE_COEFF_3: [f64; 4] = [
+    120., 60., 12.,
+      1.
+];
+const PADE_COEFF_5: [f64; 6] = [
+    30240., 15120., 3360.,
+      420.,    30.,    1.
+];
+const PADE_COEFF_7: [f64; 8]   = [
+    17297280., 8648640., 1995840.,
+      277200.,   25200.,    1512.,
+          56.,       1.
+];
+const PADE_COEFF_9: [f64; 10]  = [
+    17643225600., 8821612800., 2075673600.,
+      302702400.,   30270240.,    2162160.,
+         110880.,       3960.,         90.,
+              1.
+];
+const PADE_COEFF_13: [f64; 14] = [
+    64764752532480000., 32382376266240000., 7771770303897600.,
+     1187353796428800.,   129060195264000.,   10559470521600.,
+         670442572800.,       33522128640.,       1323241920.,
+             40840800.,            960960.,            16380.,
+                  182.,                 1.
+];
 
 /// Calculates the of leading terms in the backward error function for the [m/m] Padé approximant
 /// to the exponential function, i.e. it calculates:
@@ -102,9 +116,10 @@ trait PadeOrder {
     /// Return the coefficients arising in both the numerator as well as in the denominator of the
     /// Padé approximant (they are the same, due to $p(x) = q(-x)$.
     ///
-    /// TODO: This is a great usecase for const generics, returning &'static [u64; Self::ORDER],
-    /// once RFC 2000 lands. See the PR https://github.com/rust-lang/rust/pull/53645
-    unsafe fn coefficients() -> &'static [f64];
+    /// TODO: This is a great usecase for const generics, returning &[u64; Self::ORDER] and
+    /// possibly calculating the values at compile time instead of hardcoding them.
+    /// Maybe possible once RFC 2000 lands? See the PR https://github.com/rust-lang/rust/pull/53645
+    fn coefficients() -> &'static [f64];
 
     fn calculate_pade_sums<S1, S2, S3>(a: &ArrayBase<S1, Ix2>, a_powers: &[&ArrayBase<S1, Ix2>], u: &mut ArrayBase<S2, Ix2>, v: &mut ArrayBase<S3, Ix2>, work: &mut ArrayBase<S2, Ix2>)
         where S1: Data<Elem=f64>,
@@ -113,38 +128,15 @@ trait PadeOrder {
 }
 
 macro_rules! impl_padeorder {
-    ($($ty:ty, $m:literal, $coeff_slice:ident),+) => {
+    ($($ty:ty, $m:literal, $const_coeff:ident),+) => {
 
 $(
-
-static mut $coeff_slice: [f64; $m+1] = [0.0; $m + 1];
 
 impl PadeOrder for $ty {
     const ORDER: u64 = $m;
 
-    // TODO: Check if the compiler performs const-propagation, i.e. calculates the
-    // coefficients at compile time. Potential ...
-    // ... FIXME: If the compiler does not perform const-propagation, replace the
-    // coefficients by their hardcoded values.
-    unsafe fn coefficients() -> &'static [f64] {
-        assert!($m > 0);
-        {
-            let mut coeff_iter = $coeff_slice.iter_mut().enumerate().rev();
-
-            let highest_order_coeff;
-            {
-                // NOTE: Guaranteed to work due to assert! above.
-                let (i, coeff) = coeff_iter.next().unwrap();
-                highest_order_coeff = pade_coefficient(i as u64, $m);
-                *coeff = 1.0;
-            }
-
-            for (i, elem) in coeff_iter {
-                *elem = pade_coefficient(i as u64, $m) / highest_order_coeff;
-            }
-        }
-
-        &$coeff_slice
+    fn coefficients() -> &'static [f64] {
+        &$const_coeff
     }
 
     fn calculate_pade_sums<S1, S2, S3>(
@@ -165,7 +157,7 @@ impl PadeOrder for $ty {
         let n = n_rows as i32;
 
         // Iterator to get 2 coefficients, c_{2i} and c_{2i+1}, and 1 matrix power at a time.
-        let mut iterator = unsafe { Self::coefficients().chunks_exact(2).zip(a_powers.iter()) };
+        let mut iterator = Self::coefficients().chunks_exact(2).zip(a_powers.iter());
 
         // First element from the iterator.
         //
@@ -224,38 +216,17 @@ impl PadeOrder for $ty {
 }
 
 impl_padeorder!(
-    PadeOrder_3, 3, PADE_COEFFICIENTS_3,
-    PadeOrder_5, 5, PADE_COEFFICIENTS_5,
-    PadeOrder_7, 7, PADE_COEFFICIENTS_7,
-    PadeOrder_9, 9, PADE_COEFFICIENTS_9
+    PadeOrder_3, 3, PADE_COEFF_3,
+    PadeOrder_5, 5, PADE_COEFF_5,
+    PadeOrder_7, 7, PADE_COEFF_7,
+    PadeOrder_9, 9, PADE_COEFF_9
 );
-
-static mut PADE_COEFFICIENTS_13: [f64; 13 + 1] = [1.0; 13 + 1];
 
 impl PadeOrder for PadeOrder_13 {
     const ORDER: u64 = 13;
 
-    // TODO: Check if the compiler performs const-propagation, i.e. calculates the
-    // coefficients at compile time. Potential ...
-    // ... FIXME: If the compiler does not perform const-propagation, replace the
-    // coefficients by their hardcoded values.
-    unsafe fn coefficients() -> &'static [f64] {
-        assert!(13 > 0);
-        let mut coeff_iter = PADE_COEFFICIENTS_13.iter_mut().enumerate().rev();
-
-        let highest_order_coeff;
-        {
-            // NOTE: Guaranteed to work due to assert! above.
-            let (i, coeff) = coeff_iter.next().unwrap();
-            highest_order_coeff = pade_coefficient(i as u64, 13);
-            *coeff = 1.0;
-        }
-
-        for (i, elem) in coeff_iter {
-            *elem = pade_coefficient(i as u64, 13) / highest_order_coeff;
-        }
-
-        &PADE_COEFFICIENTS_13
+    fn coefficients() -> &'static [f64] {
+        &PADE_COEFF_13
     }
 
     fn calculate_pade_sums<S1, S2, S3>(
@@ -275,7 +246,7 @@ impl PadeOrder for PadeOrder_13 {
         assert_eq!(n_rows, n_cols, "Pade sum only defined for square matrices.");
         let n = n_rows;
 
-        let coefficients = unsafe { Self::coefficients() };
+        let coefficients = Self::coefficients();
 
         Zip::from(&mut *work)
             .and(a_powers[0])
@@ -380,15 +351,15 @@ impl Expm {
     /// n×n.
     pub fn new(n: usize) -> Self {
         let eye = Array2::<f64>::eye(n);
-        let a1 = unsafe { Array2::<f64>::uninitialized((n, n)) };
-        let a2 = unsafe { Array2::<f64>::uninitialized((n, n)) };
-        let a4 = unsafe { Array2::<f64>::uninitialized((n, n)) };
-        let a6 = unsafe { Array2::<f64>::uninitialized((n, n)) };
-        let a8 = unsafe { Array2::<f64>::uninitialized((n, n)) };
-        let a_abs = unsafe { Array2::<f64>::uninitialized((n, n)) };
-        let u = unsafe { Array2::<f64>::uninitialized((n, n)) };
-        let work = unsafe { Array2::<f64>::uninitialized((n, n)) };
-        let pivot = unsafe { Array1::<i32>::uninitialized(n) };
+        let a1 = Array2::<f64>::zeros((n, n));
+        let a2 = Array2::<f64>::zeros((n, n));
+        let a4 = Array2::<f64>::zeros((n, n));
+        let a6 = Array2::<f64>::zeros((n, n));
+        let a8 = Array2::<f64>::zeros((n, n));
+        let a_abs = Array2::<f64>::zeros((n, n));
+        let u = Array2::<f64>::zeros((n, n));
+        let work = Array2::<f64>::zeros((n, n));
+        let pivot = Array1::<i32>::zeros(n);
         let layout = cblas::Layout::RowMajor;
 
         // TODO: Investigate what an optimal value for t is when estimating the 1-norm.
@@ -757,11 +728,62 @@ mod tests {
     extern crate openblas_src;
     use ndarray::prelude::*;
     use approx::assert_ulps_eq;
+
+    use crate::PadeOrder;
+
+    /// Calculates the i-th coefficient arising in the [m/m] Padé approximant of the exponential
+    /// function.
+    fn pade_coefficient(i: u64, m: u64) -> f64 {
+        use statrs::function::factorial::factorial;
+
+        assert!(i <= m, "The i-th coefficient for a [m/m] Padé approximant is undefined for i > m.");
+
+        // TODO: Check if the order of multiplications and divisions should be adapted to always
+        // multiply quantities of similar magnitude, i.e. to not lose precision to floating point
+        // arithmetic
+        factorial(2*m - i) * factorial(m) / factorial(2*m) / factorial(m-i) / factorial(i)
+    }
+
+    macro_rules! verify_pade_coefficients {
+        ( $( $testname:ident, $padeorder:ty ),+ ) => {
+            $(
+
+            #[test]
+            fn $testname() {
+                assert_eq!(<$padeorder>::ORDER + 1, <$padeorder>::coefficients().len() as u64);
+                let mut coefficient_iterator =
+                    <$padeorder>::coefficients()
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .map(|(i, &hc)| (pade_coefficient(i as u64, <$padeorder>::ORDER), hc)
+                );
+                let (calculated, hardcoded) = coefficient_iterator.next().unwrap();
+                let highest_order_coefficient = 1.0/calculated;
+                assert_eq!(1.0, hardcoded);
+
+                for (calculated, hardcoded) in coefficient_iterator {
+                    assert_ulps_eq!(calculated * highest_order_coefficient, hardcoded, max_ulps=1);
+                }
+            }
+
+            )+
+        }
+    }
+
+    verify_pade_coefficients!(
+        verify_pade_3,  crate::PadeOrder_3,
+        verify_pade_5,  crate::PadeOrder_5,
+        verify_pade_7,  crate::PadeOrder_7,
+        verify_pade_9,  crate::PadeOrder_9,
+        verify_pade_13, crate::PadeOrder_13
+    );
+
     #[test]
     fn exp_of_unit() {
         let n = 5;
         let a = Array2::eye(n);
-        let mut b = unsafe { Array2::<f64>::uninitialized((n, n)) };
+        let mut b = Array2::<f64>::zeros((n, n));
 
         crate::expm(&a, &mut b);
 
